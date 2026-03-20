@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="더프 체크">
+  <title>수험 준비 체크리스트</title>
+  
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23080810%22/><text x=%2250%22 y=%2250%22 font-size=%2260%22 text-anchor=%22middle%22 dominant-baseline=%22central%22 fill=%22%23e94560%22>✓</text></svg>">
+  
+  <style>
+    body, html {
+      margin: 0; padding: 0; background-color: #080810; 
+      overscroll-behavior-y: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    * { user-select: none; -webkit-user-select: none; }
+    input { user-select: auto; -webkit-user-select: auto; }
+  </style>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+    import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+    const firebaseConfig = {
+      apiKey: "AIzaSyB_Foqhh9AyesdJITuYLvDH8CL96x1e0U4",
+      authDomain: "the-premium-7d68a.firebaseapp.com",
+      projectId: "the-premium-7d68a",
+      storageBucket: "the-premium-7d68a.firebasestorage.app",
+      messagingSenderId: "982069473359",
+      appId: "1:982069473359:web:68ffb88d706b9acca63a3a"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    window.__db = db;
+    window.__fsDoc = (col, id) => doc(db, col, id);
+    window.__setDoc = setDoc;
+    window.__onSnapshot = onSnapshot;
+    window.dispatchEvent(new Event("firestore-ready"));
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const SUBJECTS = ["국어", "수학", "영어", "물리", "생명"];
+    const DAYS = ["금","토","일","월","화","수","목","금","토","일","월","화","수","목","금","토","일","월","화","수","목","금","토","일","월","화","수","목"];
+    const DATE_KEYS = [
+      "3/20","3/21","3/22","3/23","3/24","3/25","3/26","3/27","3/28","3/29",
+      "3/30","3/31","4/1","4/2","4/3","4/4","4/5","4/6","4/7","4/8",
+      "4/9","4/10","4/11","4/12","4/13","4/14","4/15","4/16"
+    ];
+
+    const SUBJECT_COLORS = {
+      국어: "#ffb74d",
+      수학: "#74c69d",
+      영어: "#ff6b8a",
+      물리: "#4fc3f7",
+      생명: "#ce93d8",
+    };
+
+    const emptySchedule = () => {
+      const s = {};
+      DATE_KEYS.forEach((d, i) => {
+        s[d] = { label: DAYS[i], tasks: { 국어: [], 수학: [], 영어: [], 물리: [], 생명: [] } };
+      });
+      return s;
+    };
+
+    function App() {
+      const [schedule, setSchedule] = useState(() => emptySchedule());
+      const [checked, setChecked] = useState({});
+      const [selectedDate, setSelectedDate] = useState(DATE_KEYS[0]);
+      const [filter, setFilter] = useState("all");
+      const [editMode, setEditMode] = useState(false);
+      const [editingCell, setEditingCell] = useState(null);
+      const [addingTo, setAddingTo] = useState(null);
+      const [newTaskText, setNewTaskText] = useState("");
+      const [synced, setSynced] = useState(false);
+      const inputRef = useRef(null);
+      const saveTimer = useRef(null);
+
+      // Firestore 실시간 구독
+      useEffect(() => {
+        const setup = () => {
+          const ref = window.__fsDoc("dprep", "main");
+          const unsub = window.__onSnapshot(ref, (snap) => {
+            if (snap.exists()) {
+              const data = snap.data();
+              if (data.schedule) setSchedule(data.schedule);
+              if (data.checked) setChecked(data.checked);
+            }
+            setSynced(true);
+          });
+          return unsub;
+        };
+        if (window.__db) {
+          const unsub = setup();
+          return () => unsub();
+        } else {
+          const handler = () => { setup(); };
+          window.addEventListener("firestore-ready", handler);
+          return () => window.removeEventListener("firestore-ready", handler);
+        }
+      }, []);
+
+      // 변경 시 Firestore에 저장 (디바운스 500ms)
+      const saveToFirestore = (newSchedule, newChecked) => {
+        if (!window.__db) return;
+        clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+          const ref = window.__fsDoc("dprep", "main");
+          window.__setDoc(ref, { schedule: newSchedule, checked: newChecked }, { merge: true });
+        }, 500);
+      };
+
+      useEffect(() => {
+        if (inputRef.current) inputRef.current.focus();
+      }, [editingCell, addingTo]);
+
+      const isChecked = (date, subject, task) => !!checked[`${date}__${subject}__${task}`];
+
+      const toggleTask = (date, subject, task) => {
+        if (editMode) return;
+        const key = `${date}__${subject}__${task}`;
+        setChecked(prev => {
+          const next = { ...prev, [key]: !prev[key] };
+          saveToFirestore(schedule, next);
+          return next;
+        });
+      };
+
+      const getDayProgress = (date) => {
+        let done = 0, total = 0;
+        Object.entries(schedule[date]?.tasks || {}).forEach(([subj, list]) => {
+          list.forEach(t => { total++; if (isChecked(date, subj, t)) done++; });
+        });
+        return { done, total };
+      };
+
+      const getTotalProgress = () => {
+        let done = 0, total = 0;
+        Object.entries(schedule).forEach(([date, { tasks }]) => {
+          Object.entries(tasks).forEach(([subj, list]) => {
+            list.forEach(t => { total++; if (isChecked(date, subj, t)) done++; });
+          });
+        });
+        return { done, total };
+      };
+
+      const updateTask = (subject, index, value) => {
+        setSchedule(prev => {
+          const updated = { ...prev };
+          const tasks = { ...updated[selectedDate].tasks };
+          const list = [...tasks[subject]];
+          list[index] = value;
+          tasks[subject] = list;
+          updated[selectedDate] = { ...updated[selectedDate], tasks };
+          saveToFirestore(updated, checked);
+          return updated;
+        });
+      };
+
+      const deleteTask = (subject, index) => {
+        setSchedule(prev => {
+          const updated = { ...prev };
+          const tasks = { ...updated[selectedDate].tasks };
+          tasks[subject] = tasks[subject].filter((_, i) => i !== index);
+          updated[selectedDate] = { ...updated[selectedDate], tasks };
+          saveToFirestore(updated, checked);
+          return updated;
+        });
+        setEditingCell(null);
+      };
+
+      const addTask = (subject) => {
+        const text = newTaskText.trim();
+        if (!text) { setAddingTo(null); setNewTaskText(""); return; }
+        setSchedule(prev => {
+          const updated = { ...prev };
+          const tasks = { ...updated[selectedDate].tasks };
+          tasks[subject] = [...tasks[subject], text];
+          updated[selectedDate] = { ...updated[selectedDate], tasks };
+          saveToFirestore(updated, checked);
+          return updated;
+        });
+        setNewTaskText("");
+        setAddingTo(null);
+      };
+
+      const currentDay = schedule[selectedDate];
+      const { done: totalDone, total: totalTotal } = getTotalProgress();
+      const totalPct = totalTotal ? Math.round((totalDone / totalTotal) * 100) : 0;
+      const dIdx = DATE_KEYS.indexOf(selectedDate);
+      const daysLeft = DATE_KEYS.length - dIdx;
+
+      const filteredSubjects = filter === "all"
+        ? Object.entries(currentDay.tasks)
+        : Object.entries(currentDay.tasks).filter(([s]) => s === filter);
+
+      return (
+        <div style={{ minHeight: "100vh", background: "#080810", color: "#e8e8f0", fontFamily: "'Noto Sans KR', sans-serif", display: "flex", flexDirection: "column" }}>
+          <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+          <div style={{ borderBottom: "1px solid #1a1a2e", padding: "calc(env(safe-area-inset-top) + 18px) 20px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(180deg, #0d0d1a 0%, #080810 100%)", position: "sticky", top: 0, zIndex: 100 }}>
+            <div>
+              <div style={{ fontSize: 11, letterSpacing: 4, color: "#e94560", fontFamily: "'Space Mono', monospace", marginBottom: 4 }}>
+                4월 더프 D-{daysLeft} {synced ? <span style={{color:"#74c69d", fontSize:9, letterSpacing:1}}>● SYNCED</span> : <span style={{color:"#555", fontSize:9, letterSpacing:1}}>● 연결중...</span>}
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: -1 }}>수험 준비 체크리스트</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <button
+                onClick={() => { setEditMode(v => !v); setEditingCell(null); setAddingTo(null); setNewTaskText(""); }}
+                style={{ padding: "6px 14px", borderRadius: 8, border: editMode ? "1.5px solid #e94560" : "1.5px solid #333", background: editMode ? "#1a0a10" : "transparent", color: editMode ? "#e94560" : "#666", fontSize: 12, cursor: "pointer", fontFamily: "'Space Mono', monospace", letterSpacing: 1, transition: "all 0.15s" }}>
+                {editMode ? "✓ 완료" : "✏ 편집"}
+              </button>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontFamily: "'Space Mono', monospace", fontSize: 26, fontWeight: 700, color: totalPct >= 80 ? "#74c69d" : totalPct >= 50 ? "#4fc3f7" : "#e94560" }}>
+                  {totalPct}%
+                </div>
+                <div style={{ fontSize: 11, color: "#555", letterSpacing: 1 }}>{totalDone}/{totalTotal}</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ height: 3, background: "#111120" }}>
+            <div style={{ height: "100%", width: `${totalPct}%`, background: "linear-gradient(90deg, #e94560, #4fc3f7)", transition: "width 0.4s ease" }} />
+          </div>
+
+          {editMode && (
+            <div style={{ background: "#1a0a10", borderBottom: "1px solid #e9456033", padding: "7px 20px", fontSize: 11, color: "#e94560aa", letterSpacing: 0.5 }}>
+              편집 모드 — 텍스트 클릭 시 수정 · 🗑 삭제 · + 버튼으로 추가 · Enter로 확정
+            </div>
+          )}
+
+          <div style={{ padding: "10px 14px", overflowX: "auto", display: "flex", gap: 5, borderBottom: "1px solid #1a1a2e", scrollbarWidth: "none" }}>
+            {DATE_KEYS.map((date) => {
+              const { done, total } = getDayProgress(date);
+              const pct = total ? (done / total) * 100 : 0;
+              const isSel = date === selectedDate;
+              return (
+                <button key={date} onClick={() => { setSelectedDate(date); setEditingCell(null); setAddingTo(null); }}
+                  style={{ flex: "0 0 auto", padding: "7px 10px", borderRadius: 7, border: isSel ? "1.5px solid #e94560" : "1.5px solid #1a1a2e", background: isSel ? "#1a0a10" : "transparent", color: isSel ? "#fff" : "#777", cursor: "pointer", fontSize: 11, fontFamily: "'Space Mono', monospace", transition: "all 0.15s", position: "relative", minWidth: 50, textAlign: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 12 }}>{date}</div>
+                  <div style={{ fontSize: 9, color: isSel ? "#e94560" : "#444", marginTop: 2 }}>{total === 0 ? "—" : `${done}/${total}`}</div>
+                  {total > 0 && <div style={{ position: "absolute", bottom: 0, left: 0, height: 2, width: `${pct}%`, background: pct === 100 ? "#74c69d" : "#e94560", borderRadius: "0 0 6px 6px", transition: "width 0.3s" }} />}
+                </button>
+              );
+            })}
+            <div style={{ flex: "0 0 auto", padding: "7px 12px", borderRadius: 7, border: "1.5px solid #ffd700", background: "#1a1a00", color: "#ffd700", fontSize: 11, fontFamily: "'Space Mono', monospace", minWidth: 50, textAlign: "center" }}>
+              <div style={{ fontWeight: 700, fontSize: 12 }}>4/17</div>
+              <div style={{ fontSize: 9, marginTop: 2 }}>🎯</div>
+            </div>
+          </div>
+
+          <div style={{ padding: "14px 18px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <span style={{ fontSize: 22, fontWeight: 900, letterSpacing: -1 }}>{selectedDate}</span>
+              <span style={{ marginLeft: 8, fontSize: 13, color: "#555", fontFamily: "'Space Mono', monospace" }}>{currentDay.label}요일</span>
+            </div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {["all", ...SUBJECTS].map((s) => (
+                <button key={s} onClick={() => setFilter(s)}
+                  style={{ padding: "4px 10px", borderRadius: 20, border: filter === s ? `1.5px solid ${s === "all" ? "#e94560" : SUBJECT_COLORS[s]}` : "1.5px solid #222", background: "transparent", color: filter === s ? (s === "all" ? "#e94560" : SUBJECT_COLORS[s]) : "#444", fontSize: 11, cursor: "pointer", transition: "all 0.15s" }}>
+                  {s === "all" ? "전체" : s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ padding: "0 14px calc(env(safe-area-inset-bottom) + 80px)", flex: 1 }}>
+            {filteredSubjects.map(([subject, tasks]) => {
+              const c = SUBJECT_COLORS[subject] || "#aaa";
+              const subjectDone = tasks.filter(t => isChecked(selectedDate, subject, t)).length;
+              if (!editMode && tasks.length === 0) return null;
+
+              return (
+                <div key={subject} style={{ marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "0 4px" }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: c, boxShadow: `0 0 7px ${c}` }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: c, letterSpacing: 2 }}>{subject}</span>
+                    <span style={{ fontSize: 11, color: "#444", fontFamily: "'Space Mono', monospace" }}>{subjectDone}/{tasks.length}</span>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                    {tasks.map((task, idx) => {
+                      const done = isChecked(selectedDate, subject, task);
+                      const isEditing = editMode && editingCell?.subject === subject && editingCell?.index === idx;
+
+                      return (
+                        <div key={idx}
+                          onClick={() => { if (!editMode) toggleTask(selectedDate, subject, task); }}
+                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 9, border: isEditing ? `1px solid ${c}66` : done ? `1px solid ${c}22` : "1px solid #1a1a2e", background: isEditing ? `${c}0d` : done ? `${c}0a` : "#0d0d1a", transition: "all 0.15s", cursor: editMode ? "default" : "pointer" }}>
+
+                          {!editMode && (
+                            <div style={{ width: 18, height: 18, borderRadius: 5, border: done ? `2px solid ${c}` : "2px solid #333", background: done ? c : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
+                              {done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#080810" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                            </div>
+                          )}
+
+                          {isEditing ? (
+                            <input
+                              ref={inputRef}
+                              value={editingCell.value}
+                              onChange={e => setEditingCell(prev => ({ ...prev, value: e.target.value }))}
+                              onBlur={() => { updateTask(subject, idx, editingCell.value); setEditingCell(null); }}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") { updateTask(subject, idx, editingCell.value); setEditingCell(null); }
+                                if (e.key === "Escape") setEditingCell(null);
+                              }}
+                              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "#fff", fontSize: 16, letterSpacing: -0.3, fontFamily: "'Noto Sans KR', sans-serif" }}
+                            />
+                          ) : (
+                            <span
+                              onClick={e => { if (editMode) { e.stopPropagation(); setEditingCell({ subject, index: idx, value: task }); setAddingTo(null); } }}
+                              style={{ flex: 1, fontSize: 13, color: done ? "#444" : "#ccc", textDecoration: done ? "line-through" : "none", letterSpacing: -0.3, cursor: editMode ? "text" : "inherit" }}>
+                              {task}
+                            </span>
+                          )}
+
+                          {editMode && !isEditing && (
+                            <button
+                              onClick={e => { e.stopPropagation(); deleteTask(subject, idx); }}
+                              style={{ background: "none", border: "none", color: "#e9456055", cursor: "pointer", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>
+                              🗑
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {editMode && (
+                      addingTo === subject ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 9, border: `1px dashed ${c}55`, background: `${c}08` }}>
+                          <input
+                            ref={inputRef}
+                            value={newTaskText}
+                            onChange={e => setNewTaskText(e.target.value)}
+                            onBlur={() => addTask(subject)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") addTask(subject);
+                              if (e.key === "Escape") { setAddingTo(null); setNewTaskText(""); }
+                            }}
+                            placeholder="항목 입력 후 Enter"
+                            style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "#fff", fontSize: 16, letterSpacing: -0.3, fontFamily: "'Noto Sans KR', sans-serif" }}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setAddingTo(subject); setNewTaskText(""); setEditingCell(null); }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 9, border: `1px dashed ${c}30`, background: "transparent", color: `${c}55`, fontSize: 12, cursor: "pointer", width: "100%", transition: "all 0.15s", fontFamily: "'Noto Sans KR', sans-serif" }}>
+                          + {subject} 항목 추가
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {!editMode && filteredSubjects.every(([, t]) => t.length === 0) && (
+              <div style={{ textAlign: "center", color: "#2a2a3a", padding: 60 }}>
+                <div style={{ fontSize: 28, marginBottom: 10 }}>—</div>
+                <div style={{ fontSize: 12, letterSpacing: 1 }}>✏ 편집 버튼으로 항목을 추가하세요</div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
