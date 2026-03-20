@@ -201,8 +201,8 @@
       const daysLeft = DATE_KEYS.length - dIdx;
 
       const filteredSubjects = filter === "all"
-        ? Object.entries(currentDay.tasks)
-        : Object.entries(currentDay.tasks).filter(([s]) => s === filter);
+        ? SUBJECTS.map(s => [s, currentDay.tasks[s] || []])
+        : [[filter, currentDay.tasks[filter] || []]];
 
       return (
         <div style={{ minHeight: "100vh", background: "#080810", color: "#e8e8f0", fontFamily: "'Noto Sans KR', sans-serif", display: "flex", flexDirection: "column" }}>
