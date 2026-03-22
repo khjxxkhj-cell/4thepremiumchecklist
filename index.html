@@ -196,7 +196,8 @@
         setSchedule(prev => {
           const updated = { ...prev };
           const tasks = { ...updated[selectedDate].tasks };
-          tasks[subject] = [...tasks[subject], text];
+          SUBJECTS.forEach(s => { if (!tasks[s]) tasks[s] = []; });
+          tasks[subject] = [...(tasks[subject] || []), text];
           updated[selectedDate] = { ...updated[selectedDate], tasks };
           saveToFirestore(updated, checked);
           return updated;
