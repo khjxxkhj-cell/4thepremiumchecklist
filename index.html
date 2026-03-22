@@ -94,7 +94,17 @@
           const unsub = window.__onSnapshot(ref, (snap) => {
             if (snap.exists()) {
               const data = snap.data();
-              if (data.schedule) setSchedule(data.schedule);
+              if (data.schedule) {
+                const fixed = { ...data.schedule };
+                DATE_KEYS.forEach(d => {
+                  if (fixed[d]) {
+                    SUBJECTS.forEach(s => {
+                      if (!fixed[d].tasks[s]) fixed[d].tasks[s] = [];
+                    });
+                  }
+                });
+                setSchedule(fixed);
+              }
               if (data.checked) setChecked(data.checked);
             }
             setSynced(true);
